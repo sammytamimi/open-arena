@@ -61,13 +61,25 @@ def upload_rows(
         )
 
     uploaded: list[Row] = []
+    failures: list[str] = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(_upload_one, r) for r in rows]
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Uploading to Langfuse"):
+        future_to_row = {
+            executor.submit(_upload_one, r): (i, r) for i, r in enumerate(rows, start=1)
+        }
+        for future in tqdm(as_completed(future_to_row), total=len(future_to_row), desc="Uploading to Langfuse"):
+            index, (input_, _expected, _metadata) = future_to_row[future]
             try:
                 uploaded.append(future.result())
             except Exception as e:
-                _logger.error(f"Upload failed for row: {e}")
+                _logger.error(f"Upload failed for row {index}: {e}")
+                failures.append(f"row {index} ({input_[:_MISSING_PREVIEW_LENGTH]!r}): {e}")
+
+    if failures:
+        preview = "; ".join(failures[:5]) + (", ..." if len(failures) > 5 else "")
+        raise RuntimeError(
+            f"Failed to upload {len(failures)}/{len(rows)} rows to Langfuse dataset "
+            f"'{dataset_name}': {preview}"
+        )
 
     return uploaded
 
